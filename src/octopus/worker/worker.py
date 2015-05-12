@@ -153,49 +153,41 @@ class Worker(MainLoopApplication):
         return multiprocessing.cpu_count()
 
     def getTotalMemory(self):
-        memTotal = 1024
-        if os.path.isfile('/proc/meminfo'):
-            try:
-                # get total memory
-                f = open('/proc/meminfo', 'r')
-                for line in f.readlines():
-                    if line.split()[0] == 'MemTotal:':
-                        memTotal = line.split()[1]
-                        f.close()
-                        break
-            except:
-                pass
-        return int(memTotal) / 1024
+        """
+        | Use psutil module to retrieve total memory available. The value is transmitted as a int.
+        :return: An integer representing the amount of total memory available on the system
+        """
+        memTotal = 0
+        try:
+            memTotal = psutil.virtual_memory().total
+        except psutil.Error:
+            LOGGER.warning("An error occured when retrieving total memory.")
+        except NameError, e:
+            LOGGER.debug("Impossible to use psutil module on this host: %r" % e)
+        except Exception, e:
+            LOGGER.warning("An unexpected error occured: %r" % e)
+        return int(memTotal) / ( 1024 ** 2 )
 
     def getFreeMem(self, pUnit=MEGABYTES):
         """
-        | Starts a shell process to retrieve amount of free memory on the worker's system.
-        | The amount of memory is transmitted in MEGABYTES, but can be specified to another unit
-        | To estimate this, we retrieve specific values in /proc/meminfo:
-        | Result = MemFree + Buffers + Cached
-
+        | Use psutil module to retrieve free memory. The value is transmitted as a int.
         :param pUnit: An integer representing the unit to which the value is converted (DEFAULT is MEGABYTES).
         :return: An integer representing the amount of FREE memory on the system
-        :raise: OSError if subprocess fails. Returns "-1" if no correct value can be retrieved.
         """
-
+        freeMem = 0
         try:
-            freeMemStr = subprocess.Popen(["awk",
-                                           "/MemFree|Buffers|^Cached/ {free+=$2} END {print  free}",
-                                           "/proc/meminfo"], stdout=PIPE).communicate()[0]
-        except OSError, e:
-            LOGGER.warning("Error when retrievieng free memory: %r", e)
-
-        if freeMemStr == '':
-            return -1
-
-        freeMem = int(freeMemStr)
+            freeMem = psutil.virtual_memory().available
+        except psutil.Error:
+            LOGGER.warning("An error occured when retrieving free memory.")
+        except NameError, e:
+            LOGGER.debug("Impossible to use psutil module on this host: %r" % e)
+        except Exception, e:
+            LOGGER.warning("An unexpected error occured: %r" % e)
 
         if pUnit is MEGABYTES:
-            freeMem = int(freeMem / 1024)
+            freeMem = int(freeMem / (1024 ** 2))
         elif pUnit is GIGABYTES:
-            freeMem = int(freeMem / (1024 * 1024))
-
+            freeMem = int(freeMem / (1024 ** 3))
         return freeMem
 
     def getSwapUsage(self):
@@ -213,11 +205,10 @@ class Worker(MainLoopApplication):
             LOGGER.debug("Impossible to use psutil module on this host: %r" % e)
         except Exception, e:
             LOGGER.warning("An unexpected error occured: %r" % e)
-
         return swapUsage
 
     def getCpuInfo(self):
-        if os.path.isfile('/proc/cpuinfo'):
+        if platform.system() == "Linux":
             try:
                 # get cpu speed
                 f = open('/proc/cpuinfo', 'r')
@@ -230,6 +221,14 @@ class Worker(MainLoopApplication):
                 f.close()
             except:
                 pass
+        elif platform.system() == "Darwin":
+            command = '/usr/sbin/sysctl -n machdep.cpu.brand_string'
+            result = subprocess.check_output(command, shell=True)
+            self.cpuName = result.split('@')[0].strip()
+            self.speed = result.split('@')[1].split('GHz')[0].strip()
+        else:
+            self.cpuName = 'unknown'
+            self.speed = 'unknown'
 
     def getDistribName(self):
         '''
@@ -274,18 +273,21 @@ class Worker(MainLoopApplication):
             self.distrib = "unknown"
 
     def getOpenglVersion(self):
-        import subprocess
-        import re
-        p = subprocess.Popen("glxinfo", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output, errors = p.communicate()
-        outputList = output.split("\n")
-        for line in outputList:
-            if "OpenGL version string" in line:
-                LOGGER.info("found : %s" % line)
-                oglpattern = re.compile("(\d.\d.\d)")
-                res = oglpattern.search(line)
-                self.openglversion = res.group()
-                break
+        if platform.system() == "Linux":
+            import subprocess
+            import re
+            p = subprocess.Popen("glxinfo", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            output, errors = p.communicate()
+            outputList = output.split("\n")
+            for line in outputList:
+                if "OpenGL version string" in line:
+                    LOGGER.info("found : %s" % line)
+                    oglpattern = re.compile("(\d.\d.\d)")
+                    res = oglpattern.search(line)
+                    self.openglversion = res.group()
+                    break
+        elif platform.system() == 'Darwin':
+            self.openglversion = 'unknown'
 
     def updateSysInfos(self, ticket):
         self.updateSys = True
