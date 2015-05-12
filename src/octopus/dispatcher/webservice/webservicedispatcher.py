@@ -246,10 +246,18 @@ class SystemResource(DispatcherBaseResource):
         uptime = 0
         load = (0, 0, 0)
         try:
-            with open('/proc/uptime', 'r') as f:
-                uptime_seconds = float(f.readline().split()[0])
-                uptime = timedelta(seconds=uptime_seconds)
-                load = os.getloadavg()
+            # code stolen from https://gist.github.com/carschar/1019870
+            # don't work on Windows 
+            raw = subprocess.check_output('uptime').replace(',','')
+            days = int(raw.split()[2])
+            if 'min' in raw:
+                hours = 0
+                minutes = int(raw[4])
+            else:
+                hours, minutes = map(int, raw.split()[4].split(':'))
+            uptime_seconds = days*24*60*60 + hours*60*60 + minutes*60
+            uptime = timedelta(seconds=uptime_seconds)
+            load = os.getloadavg()
         except Exception, e:
             logging.getLogger('main').warning("Impossible to retrieve server uptime or load average: %s" % e)
 
